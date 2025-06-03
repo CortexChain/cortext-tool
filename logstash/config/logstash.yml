@@ -1,3 +1,5 @@
+# Logstash Configuration for ContextChain
 http.host: "0.0.0.0"
-xpack.monitoring.elasticsearch.hosts: ["http://contextchain-elasticsearch:9200"]
-xpack.monitoring.enabled: false
+xpack.monitoring.elasticsearch.hosts: [ "http://contextchain-elasticsearch:9200" ]
+path.config: /usr/share/logstash/pipeline
+log.level: info

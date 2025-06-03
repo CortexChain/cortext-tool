@@ -1,43 +1,36 @@
+# Filebeat Configuration for ContextChain
 filebeat.inputs:
 - type: container
   paths:
     - '/var/lib/docker/containers/*/*.log'
-  
+  fields:
+    logtype: docker
+    environment: contextchain
+    project: cortext_redis
+  fields_under_root: true
   processors:
   - add_docker_metadata:
       host: "unix:///var/run/docker.sock"
-  
-  - drop_event:
-      when:
-        not:
-          or:
-            - contains:
-                docker.container.name: "contextchain-kafka"
-            - contains:
-                docker.container.name: "contextchain-zookeeper"
-            - contains:
-                docker.container.name: "contextchain-akhq"
-            - contains:
-                docker.container.name: "contextchain-kafdrop"
-            - contains:
-                docker.container.name: "contextchain-schema-registry"
-            - contains:
-                docker.container.name: "contextchain-kafka-connect"
-  
-  fields:
-    log_type: container
-    environment: contextchain
-  fields_under_root: false
 
-output.kafka:
-  hosts: ["contextchain-kafka:9092"]
-  topic: "kafka-logs"
-  partition.round_robin:
-    reachable_only: false
-  
-  required_acks: 1
-  compression: lz4
-  max_message_bytes: 1000000
+# Redis specific log collection
+- type: log
+  paths:
+    - '/var/lib/docker/volumes/contextchain_redis_master_data/_data/*.log'
+    - '/var/lib/docker/volumes/contextchain_redis_slave_data/_data/*.log'
+  fields:
+    logtype: redis
+    environment: contextchain
+    project: cortext_redis
+  fields_under_root: true
+
+output.logstash:
+  hosts: ["contextchain-logstash:5044"]
+
+processors:
+- add_host_metadata:
+    when.not.contains.tags: forwarded
+- add_cloud_metadata: ~
+- add_docker_metadata: ~
 
 logging.level: info
 logging.to_files: true
@@ -47,10 +40,7 @@ logging.files:
   keepfiles: 7
   permissions: 0644
 
-processors:
-- add_host_metadata: ~
-- add_docker_metadata: ~
-- decode_json_fields:
-    fields: ["message"]
-    target: ""
-    overwrite_keys: true
+# Setup template
+setup.template.name: "contextchain"
+setup.template.pattern: "contextchain-*"
+setup.template.enabled: true
