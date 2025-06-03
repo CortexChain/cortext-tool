@@ -1,6 +1,6 @@
 # ContextChain Kafka + ELK Stack
 
-Hệ thống streaming và logging hoàn chỉnh với Apache Kafka và ELK Stack (Elasticsearch, Logstash, Kibana) được containerize với Docker Compose.
+Hệ thống streaming và logging với Apache Kafka và ELK Stack (Elasticsearch, Logstash, Kibana) được containerize với Docker Compose.
 
 ## 🏗️ Architecture
 
