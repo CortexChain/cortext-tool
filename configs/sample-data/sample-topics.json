@@ -1,0 +1,31 @@
+{
+  "topics": [
+    {
+      "name": "user-events",
+      "partitions": 3,
+      "replicationFactor": 1,
+      "configs": {
+        "retention.ms": "604800000",
+        "compression.type": "lz4"
+      }
+    },
+    {
+      "name": "order-events", 
+      "partitions": 6,
+      "replicationFactor": 1,
+      "configs": {
+        "retention.ms": "2592000000",
+        "compression.type": "lz4"
+      }
+    },
+    {
+      "name": "audit-logs",
+      "partitions": 1,
+      "replicationFactor": 1,
+      "configs": {
+        "retention.ms": "7776000000",
+        "compression.type": "gzip"
+      }
+    }
+  ]
+}
