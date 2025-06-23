@@ -1,289 +1,390 @@
-# ContextChain Kafka + ELK Stack
+# ContextChain Infrastructure
 
-Hệ thống streaming và logging với Apache Kafka và ELK Stack (Elasticsearch, Logstash, Kibana) được containerize với Docker Compose.
+Hệ thống infrastructure hoàn chỉnh cho ContextChain với Kafka, Redis, ELK Stack và Nginx Load Balancer, được thiết kế để xử lý dữ liệu phân tán với hiệu suất cao.
 
-## 🏗️ Architecture
+## 🏗️ Kiến trúc tổng quan
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        ContextChain System                      │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
-│  │   Kafka UI  │    │   Kafdrop   │    │    AKHQ     │         │
-│  │   :8080     │    │    :9000    │    │    :8081    │         │
-│  └─────────────┘    └─────────────┘    └─────────────┘         │
-│          │                  │                  │               │
-│          └──────────────────┼──────────────────┘               │
-│                             │                                  │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                  Apache Kafka                          │   │
-│  │                   :9092, :29092                        │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │   │
-│  │  │user-events  │  │order-events │  │ audit-logs  │    │   │
-│  │  │  (3 parts)  │  │  (6 parts)  │  │  (1 part)   │    │   │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                             │                                  │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                   Zookeeper                            │   │
-│  │                     :2181                              │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│                         ELK Stack                              │
-│                                                                 │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
-│  │  Filebeat   │───▶│  Logstash   │───▶│Elasticsearch│         │
-│  │             │    │    :5044    │    │    :9200    │         │
-│  │             │    │    :5001    │    │    :9300    │         │
-│  └─────────────┘    └─────────────┘    └─────────────┘         │
-│          │                                      │               │
-│          │          ┌─────────────┐             │               │
-│          └─────────▶│   Kibana    │◀────────────┘               │
-│                     │    :5601    │                             │
-│                     └─────────────┘                             │
-│                                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│                       Monitoring                               │
-│                                                                 │
-│  ┌─────────────┐                                               │
-│  │Kafka Export │  ──── Prometheus Metrics                     │
-│  │    :9308    │                                               │
-│  └─────────────┘                                               │
+│                        NGINX LOAD BALANCER                      │
+│  ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐  │
+│  │HTTP:80  │AKHQ:8080│Kibana   │Redis    │Kafka    │Logs     │  │
+│  │HTTPS:443│         │:5601    │W:6379   │:9092    │:5044    │  │
+│  │         │         │ES:9200  │R:6380   │:9093    │:5001    │  │
+│  └─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘  │
 └─────────────────────────────────────────────────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │                       │                       │
+┌───────▼────────┐    ┌─────────▼────────┐    ┌────────▼────────┐
+│   KAFKA CLUSTER │    │  REDIS CLUSTER   │    │   ELK STACK     │
+│                 │    │                  │    │                 │
+│ ┌─────────────┐ │    │ ┌──────────────┐ │    │ ┌─────────────┐ │
+│ │ Kafka Broker│ │    │ │Redis Master  │ │    │ │Elasticsearch│ │
+│ │ (KRaft Mode)│ │    │ │(Write Ops)   │ │    │ │             │ │
+│ │             │ │    │ │DB:cortext_   │ │    │ │             │ │
+│ │ - PLAINTEXT │ │    │ │   redis      │ │    │ │             │ │
+│ │ - SASL      │ │    │ └──────────────┘ │    │ └─────────────┘ │
+│ │ - EXTERNAL  │ │    │ ┌──────────────┐ │    │ ┌─────────────┐ │
+│ └─────────────┘ │    │ │Redis Slave   │ │    │ │ Logstash    │ │
+│ ┌─────────────┐ │    │ │(Read Ops)    │ │    │ │             │ │
+│ │AKHQ Web UI  │ │    │ │DB:cortext_   │ │    │ │             │ │
+│ │             │ │    │ │   redis      │ │    │ │             │ │
+│ └─────────────┘ │    │ └──────────────┘ │    │ └─────────────┘ │
+│ ┌─────────────┐ │    └──────────────────┘    │ ┌─────────────┐ │
+│ │Kafka        │ │                            │ │ Kibana      │ │
+│ │Exporter     │ │                            │ │             │ │
+│ └─────────────┘ │                            │ └─────────────┘ │
+└─────────────────┘                            │ ┌─────────────┐ │
+                                               │ │ Filebeat    │ │
+                                               │ │             │ │
+                                               │ └─────────────┘ │
+                                               └─────────────────┘
 ```
 
-## 🔄 Data Flow
+## 🔄 Lifecycle và hoạt động
 
-### 1. Log Collection Flow
+### 1. **Khởi động hệ thống (Startup Lifecycle)**
+
+```mermaid
+graph TD
+    A[docker-compose up] --> B[Create Networks & Volumes]
+    B --> C[Start Core Services]
+    C --> D[Kafka KRaft Cluster]
+    C --> E[Redis Master/Slave]
+    C --> F[Elasticsearch]
+    D --> G[Health Checks]
+    E --> G
+    F --> G
+    G --> H[Start Dependent Services]
+    H --> I[AKHQ, Kibana, Logstash]
+    I --> J[Start Nginx Load Balancer]
+    J --> K[Filebeat Log Collection]
+    K --> L[System Ready]
 ```
-Docker Containers → Filebeat → Kafka Topic (kafka-logs) → Logstash → Elasticsearch → Kibana
+
+**Thứ tự khởi động:**
+1. **Infrastructure Layer**: Networks, Volumes
+2. **Core Services**: Kafka, Redis Master, Elasticsearch
+3. **Dependent Services**: Redis Slave, Logstash, AKHQ, Kafka Exporter
+4. **Presentation Layer**: Kibana, Nginx
+5. **Monitoring Layer**: Filebeat
+
+### 2. **Data Flow Architecture**
+
+```mermaid
+graph LR
+    A[Application] --> B[Nginx Load Balancer]
+    
+    B --> C[Kafka Cluster]
+    B --> D[Redis Master - Write]
+    B --> E[Redis Slave - Read]
+    
+    C --> F[Message Processing]
+    D --> G[Data Storage]
+    E --> H[Data Retrieval]
+    
+    I[Container Logs] --> J[Filebeat]
+    J --> K[Logstash]
+    K --> L[Elasticsearch]
+    L --> M[Kibana Dashboard]
+    
+    F --> N[Business Logic]
+    G --> N
+    H --> N
 ```
 
-### 2. Application Data Flow
+### 3. **Service Communication Flow**
+
+#### **Kafka Message Flow:**
 ```
-Applications → Kafka Topics → Consumers → Processing → Elasticsearch (via Logstash)
+Producer → Nginx:9092/9093 → Kafka Broker → Consumer
+                ↓
+        AKHQ Web UI (Monitoring)
+                ↓
+        Kafka Exporter → Prometheus Metrics
 ```
 
-### 3. Monitoring Flow
+#### **Redis Data Flow:**
 ```
-Kafka JMX Metrics → Kafka Exporter → Prometheus Metrics (Port 9308)
+Write Operations: Client → Nginx:6379 → Redis Master → Replication → Redis Slave
+Read Operations:  Client → Nginx:6380 → Redis Slave
 ```
 
-## 📋 Services Overview
+#### **Logging Flow:**
+```
+Container Logs → Filebeat → Logstash:5044 → Elasticsearch → Kibana:5601
+TCP/UDP Logs → Logstash:5001 → Elasticsearch → Kibana:5601
+```
 
-| Service | Port | Description | Health Check |
-|---------|------|-------------|--------------|
-| **Zookeeper** | 2181 | Kafka coordination service | `nc -vz localhost 2181` |
-| **Kafka** | 9092, 29092 | Message streaming platform | `kafka-topics.sh --list` |
-| **Kafka UI** | 8080 | Web UI for Kafka management | http://localhost:8080 |
-| **Elasticsearch** | 9200, 9300 | Search and analytics engine | `curl localhost:9200/_cluster/health` |
-| **Logstash** | 5044, 5001, 9600 | Data processing pipeline | - |
-| **Kibana** | 5601 | Data visualization dashboard | http://localhost:5601 |
-| **Filebeat** | - | Log shipping agent | - |
-| **Kafka Exporter** | 9308 | Prometheus metrics exporter | http://localhost:9308 |
+## 🚀 Cách setup
 
-## 🚀 Quick Start
+### **Bước 1: Chuẩn bị môi trường**
 
-### Prerequisites
-- Docker và Docker Compose
-- Minimum 8GB RAM
-- 10GB free disk space
-
-### 1. Setup Environment
 ```bash
-# Clone hoặc tạo thư mục project
-mkdir contextchain-kafka-elk
-cd contextchain-kafka-elk
+# Kiểm tra Docker và Docker Compose
+docker --version
+docker-compose --version
 
-# Copy docker-compose.yml và setup script vào thư mục
-# Chạy setup script
+# Clone hoặc tạo thư mục dự án
+mkdir contextchain-infrastructure
+cd contextchain-infrastructure
+
+# Copy docker-compose.yml và paste.txt, paste-2.txt vào thư mục
+```
+
+### **Bước 2: Chạy script setup**
+
+```bash
+# Cấp quyền thực thi cho setup script
 chmod +x setup.sh
+
+# Chạy script để tạo tất cả config files
 ./setup.sh
 ```
 
-### 2. Start Services
+Script sẽ tạo các thư mục và files sau:
+```
+contextchain-infrastructure/
+├── docker-compose.yml
+├── setup.sh
+├── nginx/
+│   └── nginx.conf
+├── redis/
+│   ├── redis-master.conf
+│   └── redis-slave.conf
+├── kafka/
+│   └── client.properties
+├── logstash/
+│   ├── config/
+│   │   └── logstash.yml
+│   └── pipeline/
+│       └── logstash.conf
+└── filebeat/
+    └── filebeat.yml
+```
+
+### **Bước 3: Khởi động hệ thống**
+
 ```bash
-# Start all services
+# Khởi động tất cả services
 docker-compose up -d
 
-# Check service status
-./check-health.sh
-```
+# Theo dõi logs
+docker-compose logs -f
 
-### 3. Create Sample Topics
-```bash
-# Create sample Kafka topics
-./create-topics.sh
-```
-
-### 4. Access Web UIs
-- **Kafka UI**: http://localhost:8080
-- **Kibana**: http://localhost:5601
-- **Elasticsearch**: http://localhost:9200
-
-## 📊 Sample Topics
-
-| Topic | Partitions | Retention | Compression | Use Case |
-|-------|------------|-----------|-------------|----------|
-| **user-events** | 3 | 7 days | lz4 | User activity tracking |
-| **order-events** | 6 | 30 days | lz4 | E-commerce transactions |
-| **audit-logs** | 1 | 90 days | gzip | Security and compliance |
-| **kafka-logs** | 3 | 7 days | lz4 | System logs from containers |
-
-## 🔧 Configuration Details
-
-### Kafka Optimization
-- **Segment Size**: 1GB for better I/O performance
-- **Compression**: LZ4 for balance between speed and size
-- **JVM Tuning**: G1GC with optimized heap settings
-- **Resource Limits**: 6GB RAM, 2 CPU cores
-
-### Elasticsearch Configuration
-- **Single Node**: Development setup
-- **Memory**: 1GB heap size
-- **Security**: Disabled for development
-- **Health Checks**: Cluster health monitoring
-
-### Logstash Pipeline
-- **Input**: Beats (port 5044) + Kafka consumer
-- **Filters**: Container logs parsing, Kafka/Zookeeper log patterns
-- **Output**: Elasticsearch indexing + stdout debug
-
-## 📈 Monitoring & Observability
-
-### Health Checks
-```bash
-# Check all services
-./check-health.sh
-
-# Individual service checks
+# Kiểm tra trạng thái services
 docker-compose ps
-docker-compose logs [service-name]
 ```
 
-### Kafka Metrics
-- **JMX Port**: 9999
-- **Prometheus Metrics**: http://localhost:9308
-- **Key Metrics**: Throughput, latency, consumer lag
+### **Bước 4: Xác minh hoạt động**
 
-### Log Analysis
-- **Kibana Dashboards**: http://localhost:5601
-- **Index Pattern**: `contextchain-logs-*`
-- **Log Sources**: Kafka, Zookeeper, application containers
-
-## 💡 Usage Examples
-
-### Produce Messages
+#### **Health Checks:**
 ```bash
-# Send test message to user-events topic
+# Kiểm tra tổng quan
+curl http://localhost/health
+
+# Kiểm tra Kafka
+curl http://localhost:8080  # AKHQ Web UI
+
+# Kiểm tra Elasticsearch
+curl http://localhost:9200/_cluster/health
+
+# Kiểm tra Redis Master (Write)
+redis-cli -h localhost -p 6379 ping
+
+# Kiểm tra Redis Slave (Read)
+redis-cli -h localhost -p 6380 ping
+```
+
+#### **Test Data Flow:**
+
+**Kafka Test:**
+```bash
+# Tạo topic
+docker exec contextchain-kafka kafka-topics.sh \
+  --create --topic test-topic --bootstrap-server localhost:9092
+
+# Producer test
 docker exec -it contextchain-kafka kafka-console-producer.sh \
-  --topic user-events \
-  --bootstrap-server localhost:9092
+  --topic test-topic --bootstrap-server localhost:9092
 
-# Type your JSON message:
-{"user_id": "123", "action": "login", "timestamp": "2025-06-03T10:00:00Z"}
-```
-
-### Consume Messages
-```bash
-# Consume from beginning
+# Consumer test (terminal khác)
 docker exec -it contextchain-kafka kafka-console-consumer.sh \
-  --topic user-events \
-  --from-beginning \
-  --bootstrap-server localhost:9092
+  --topic test-topic --bootstrap-server localhost:9092 --from-beginning
 ```
 
-### Elasticsearch Queries
+**Redis Test:**
 ```bash
-# Check index health
-curl "localhost:9200/_cat/indices?v"
+# Test Write (Master)
+redis-cli -h localhost -p 6379 set test:key "Hello ContextChain"
 
-# Search recent logs
-curl -X GET "localhost:9200/contextchain-logs-*/_search?pretty" \
-  -H 'Content-Type: application/json' \
-  -d '{"query": {"match_all": {}}, "size": 10}'
+# Test Read (Slave)
+redis-cli -h localhost -p 6380 get test:key
+```
+
+## 🎯 Service Endpoints
+
+### **Web Interfaces:**
+| Service | URL | Mô tả |
+|---------|-----|-------|
+| Main Portal | http://localhost | Trang chủ chuyển hướng |
+| AKHQ (Kafka UI) | http://localhost:8080 | Quản lý Kafka |
+| Kibana | http://localhost:5601 | Dashboard và logs |
+| Elasticsearch | http://localhost:9200 | API và cluster info |
+| Health Check | http://localhost/health | Kiểm tra hệ thống |
+
+### **TCP Services:**
+| Service | Port | Mô tả |
+|---------|------|-------|
+| Redis Write | 6379 | Master - Write operations |
+| Redis Read | 6380 | Slave - Read operations |
+| Kafka PLAINTEXT | 9092 | Kafka không authentication |
+| Kafka SASL | 9093 | Kafka với SASL authentication |
+| Kafka External | 29092 | External access |
+| Logstash Beats | 5044 | Filebeat input |
+| Logstash TCP | 5001 | TCP/UDP log input |
+
+## 📊 Monitoring và Logs
+
+### **View Logs:**
+```bash
+# Tất cả services
+docker-compose logs -f
+
+# Service cụ thể
+docker-compose logs -f kafka
+docker-compose logs -f redis-master
+docker-compose logs -f elasticsearch
+
+# Real-time logs
+docker-compose logs -f --tail=100 nginx
+```
+
+### **Kibana Dashboard:**
+1. Truy cập: http://localhost:5601
+2. Index Pattern: `contextchain-logs-*`
+3. Time field: `@timestamp`
+4. Khám phá logs theo tags: `docker`, `kafka`, `redis`, `nginx`
+
+### **Resource Monitoring:**
+```bash
+# Container stats
+docker stats
+
+# Service health
+docker-compose ps
+
+# Disk usage
+docker system df
 ```
 
 ## 🛠️ Troubleshooting
 
-### Common Issues
+### **Common Issues:**
 
-1. **Elasticsearch won't start**
-   ```bash
-   # Increase vm.max_map_count
-   sudo sysctl -w vm.max_map_count=262144
-   echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-   ```
-
-2. **Kafka connection refused**
-   ```bash
-   # Check if Zookeeper is healthy first
-   docker-compose logs zookeeper
-   docker-compose restart kafka
-   ```
-
-3. **Out of memory errors**
-   ```bash
-   # Check Docker resource limits
-   docker stats
-   # Reduce heap sizes in docker-compose.yml if needed
-   ```
-
-### Log Analysis
+**1. Port conflicts:**
 ```bash
-# View service logs
-docker-compose logs -f kafka
-docker-compose logs -f elasticsearch
-docker-compose logs -f logstash
+# Kiểm tra ports đang sử dụng
+netstat -tulpn | grep :80
+lsof -i :6379
 
-# Check disk usage
-docker system df
-docker volume ls
+# Thay đổi ports trong docker-compose.yml nếu cần
 ```
 
-## 🔒 Security Notes
-
-⚠️ **Development Setup**: Security features are disabled for development. For production:
-- Enable Kafka SASL/SSL authentication
-- Enable Elasticsearch security features
-- Use proper network segmentation
-- Implement proper access controls
-
-## 📚 Advanced Configuration
-
-### Adding New Topics
+**2. Memory issues:**
 ```bash
-# Create topic with custom config
-docker exec contextchain-kafka kafka-topics.sh \
-  --create \
-  --topic new-topic \
-  --partitions 3 \
-  --replication-factor 1 \
-  --config retention.ms=604800000 \
-  --bootstrap-server localhost:9092
+# Kiểm tra memory usage
+docker stats --no-stream
+
+# Tăng memory limits trong docker-compose.yml
 ```
 
-### Schema Registry Integration
-- Uncomment Schema Registry service in docker-compose.yml
-- Port: 8082
-- Avro schema management
+**3. Service không start:**
+```bash
+# Kiểm tra logs
+docker-compose logs [service-name]
 
-### Kafka Connect
-- Uncomment Kafka Connect service
-- Port: 8083
-- Connector management API
+# Restart service
+docker-compose restart [service-name]
 
-## 🧹 Cleanup
+# Recreate service
+docker-compose up -d --force-recreate [service-name]
+```
+
+**4. Redis replication issues:**
+```bash
+# Kiểm tra replication status
+redis-cli -h localhost -p 6379 info replication
+redis-cli -h localhost -p 6380 info replication
+```
+
+**5. Kafka connectivity:**
+```bash
+# Test SASL connection
+kafka-console-consumer.sh --bootstrap-server localhost:9093 \
+  --consumer.config /opt/bitnami/kafka/config/client.properties \
+  --topic test --from-beginning
+```
+
+## 🔧 Configuration
+
+### **Redis Database:**
+- **Database Name**: `cortext_redis`
+- **Master**: Write operations, port 6379
+- **Slave**: Read operations, port 6380
+- **Persistence**: RDB + AOF enabled
+- **Memory Policy**: allkeys-lru (512MB limit)
+
+### **Kafka:**
+- **Mode**: KRaft (no Zookeeper)
+- **Authentication**: SASL_PLAINTEXT
+- **Credentials**: admin/123456A@a
+- **Compression**: LZ4
+- **Listeners**: PLAINTEXT:9092, SASL:9093, EXTERNAL:29092
+
+### **ELK Stack:**
+- **Elasticsearch**: Single node, no security
+- **Logstash**: Multi-input (Beats, TCP, UDP)
+- **Kibana**: Connected to Elasticsearch
+- **Filebeat**: Docker container logs collection
+
+## 🛑 Shutdown
 
 ```bash
-# Stop all services
+# Graceful shutdown
 docker-compose down
 
-# Remove volumes (data will be lost)
+# Remove volumes (careful - deletes data!)
 docker-compose down -v
 
-# Remove all containers and images
-docker-compose down --rmi all -v --remove-orphans
+# Remove everything including images
+docker-compose down -v --rmi all
 ```
+
+## 📈 Performance Tuning
+
+### **Production Recommendations:**
+
+1. **Resource Limits**: Tăng memory/CPU limits
+2. **Security**: Enable authentication cho tất cả services
+3. **Monitoring**: Thêm Prometheus + Grafana
+4. **Backup**: Thiết lập backup strategy cho Redis và Elasticsearch
+5. **Clustering**: Scale thành multi-node cluster
+6. **SSL/TLS**: Enable encryption cho external connections
+
+### **Scaling Options:**
+
+```yaml
+# Multi-instance scaling
+deploy:
+  replicas: 3
+  resources:
+    limits:
+      memory: 4G
+      cpus: '2.0'
+```
+
+---
+
+🎉 **ContextChain Infrastructure sẵn sàng cho production workloads!**
